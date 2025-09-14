@@ -2,8 +2,8 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 
-from workflow import run_automation
-from obsidian import read_obsidian_notes
+from lib.workflow import run_automation
+from lib.obsidian import read_obsidian_notes
 from datetime import datetime, timedelta
 
 load_dotenv()
