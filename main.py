@@ -67,7 +67,6 @@ def main():
     print("Based on SPEC.md - Idea → Teaser → Blog → Final Posts")
     print("=" * 60)
 
-    # Check required environment variables
     required_vars = ["GEMINI_API_KEY"]
     missing_vars = [var for var in required_vars if not os.getenv(var)]
 
@@ -83,7 +82,6 @@ def main():
     print(f"📝 Obsidian File: {OBSIDIAN_FILE_PATH}")
     print(f"🌐 Blog URL: {BLOG_URL or 'Not yet published'}")
 
-    # Read Obsidian notes from file
     try:
         obsidian_notes = read_obsidian_notes(OBSIDIAN_FILE_PATH)
         print(
@@ -98,7 +96,6 @@ def main():
         print(f"⚠️ Error reading Obsidian file: {str(e)}, proceeding without notes")
         obsidian_notes = ""
 
-    # Determine phase based on blog URL
     if BLOG_URL:
         phase = "final"
         print("\n🎯 Running final post generation (blog is published)")
@@ -107,7 +104,6 @@ def main():
         print("\n🎯 Starting from idea phase (no blog URL provided)")
 
     try:
-        # Run the automation workflow
         final_state = run_automation(
             idea_text=IDEA_TEXT,
             obsidian_notes=obsidian_notes,
@@ -115,7 +111,6 @@ def main():
             phase=phase,
         )
 
-        # Display results
         display_results(final_state)
 
         if final_state.get("error"):

@@ -47,6 +47,7 @@ class AutomationState(TypedDict):
     error: Optional[str]
     custom_prompt: str
     improvement_summary: List[str]
+    improvement_iteration_count: int
 
 
 def scrape_blog_content(state: AutomationState) -> AutomationState:

@@ -54,6 +54,16 @@ def should_validate_or_end(state: AutomationState) -> str:
 def should_improve_or_evaluate(state: AutomationState) -> str:
     if state.get("error"):
         return "recovery_agent"
+
+    max_iterations = 3
+    current_iteration = state.get("improvement_iteration_count", 0)
+
+    if current_iteration >= max_iterations:
+        print(
+            f"⚠️ Maximum improvement iterations ({max_iterations}) reached, proceeding to evaluation"
+        )
+        return "self_evaluator"
+
     if state.get("validation_issues"):
         return "peer_reviewer"
     return "self_evaluator"
@@ -62,12 +72,28 @@ def should_improve_or_evaluate(state: AutomationState) -> str:
 def should_improve_or_end(state: AutomationState) -> str:
     if state.get("error"):
         return "recovery_agent"
+
+    # Check if we've exceeded the maximum improvement iterations
+    max_iterations = 3
+    current_iteration = state.get("improvement_iteration_count", 0)
+
+    if current_iteration >= max_iterations:
+        print(
+            f"⚠️ Maximum improvement iterations ({max_iterations}) reached, proceeding to evaluation"
+        )
+        return "self_evaluator"
+
     peer_feedback = state.get("peer_review_feedback", {})
     needs_improvement = any(
         feedback.get("improvement_priority") in ["medium", "high"]
         for feedback in peer_feedback.values()
     )
     if needs_improvement:
+        # Increment the iteration count before proceeding to content_improver
+        state["improvement_iteration_count"] = current_iteration + 1
+        print(
+            f"🔄 Starting improvement iteration {state['improvement_iteration_count']}/{max_iterations}"
+        )
         return "content_improver"
     return "self_evaluator"
 
@@ -77,12 +103,6 @@ def should_loop_or_end(state: AutomationState) -> str:
         return "recovery_agent"
     if state.get("requires_human_review"):
         return "END"
-
-    # Check if we need another validation loop (max 3 retries)
-    retry_count = getattr(state, "_retry_count", 0)
-    if retry_count < 3 and state.get("validation_issues"):
-        state["_retry_count"] = retry_count + 1
-        return "validator"
 
     return "END"
 
@@ -200,6 +220,7 @@ def run_automation(
         "error": None,
         "custom_prompt": "",
         "improvement_summary": [],
+        "improvement_iteration_count": 0,
     }
 
     app = create_workflow()
