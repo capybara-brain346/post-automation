@@ -10,8 +10,7 @@ load_dotenv()
 
 
 def display_results_in_streamlit(final_state):
-    """Display the generated content directly in Streamlit"""
-    st.success("🎉 Content generation completed successfully!")
+    st.success("Content generation completed successfully!")
 
     today = datetime.now()
     next_monday = today + timedelta(days=(7 - today.weekday()))
@@ -24,7 +23,7 @@ def display_results_in_streamlit(final_state):
     if has_improved_posts:
         post_version = st.radio(
             "Select version to display:",
-            ["✨ Improved Posts (Recommended)", "📝 Original Posts"],
+            ["Improved Posts (Recommended)", "Original Posts"],
             index=0,
         )
         show_improved = post_version.startswith("✨")
@@ -33,8 +32,7 @@ def display_results_in_streamlit(final_state):
 
     st.markdown("---")
 
-    # LinkedIn Posts Section
-    st.header("💼 LinkedIn Posts")
+    st.header("LinkedIn Posts")
 
     linkedin_posts_to_show = (
         final_state.get("improved_linkedin_posts", [])
@@ -43,9 +41,8 @@ def display_results_in_streamlit(final_state):
     )
 
     if linkedin_posts_to_show and len(linkedin_posts_to_show) >= 2:
-        # Monday Teaser
         with st.container():
-            st.subheader(f"📅 Monday Teaser ({next_monday.strftime('%B %d')})")
+            st.subheader(f"Monday Teaser ({next_monday.strftime('%B %d')})")
             monday_post = linkedin_posts_to_show[0]
 
             col1, col2, col3 = st.columns([2, 1, 1])
@@ -74,11 +71,10 @@ def display_results_in_streamlit(final_state):
                 hasattr(monday_post, "is_improved_version")
                 and monday_post.is_improved_version
             ):
-                st.success(f"✨ Improved: {', '.join(monday_post.improvement_notes)}")
+                st.success(f"Improved: {', '.join(monday_post.improvement_notes)}")
 
         st.markdown("---")
 
-        # Thursday Blog Reference
         with st.container():
             st.subheader(
                 f"📅 Thursday Blog Reference ({next_thursday.strftime('%B %d')})"
@@ -115,8 +111,7 @@ def display_results_in_streamlit(final_state):
 
     st.markdown("---")
 
-    # X Thread Section
-    st.header("🐦 X Thread")
+    st.header("X Thread")
 
     x_posts_to_show = (
         final_state.get("improved_x_posts", [])
@@ -151,31 +146,28 @@ def display_results_in_streamlit(final_state):
             if hasattr(post, "is_improved_version") and post.is_improved_version:
                 st.success(f"✨ Improved: {', '.join(post.improvement_notes)}")
 
-    # Peer Review & Improvements Section
     if final_state.get("improvement_summary"):
         st.markdown("---")
-        st.header("🔄 Peer Review & Improvements")
+        st.header("Peer Review & Improvements")
 
         with st.expander("View improvement details", expanded=False):
             for improvement in final_state["improvement_summary"]:
-                st.success(f"✨ {improvement}")
+                st.success(f"{improvement}")
 
             if final_state.get("requires_human_review"):
                 st.warning("⚠️ Some posts require human review due to quality concerns")
 
-    # Validation Issues Section
     if final_state.get("validation_issues"):
         st.markdown("---")
-        st.header("⚠️ Validation Notes")
+        st.header("Validation Notes")
 
         with st.expander("Review flagged items", expanded=True):
             for issue in final_state["validation_issues"]:
                 st.warning(issue)
             st.info("Please review flagged items before posting.")
 
-    # Generation Info
     st.markdown("---")
-    with st.expander("ℹ️ Generation Details"):
+    with st.expander("Generation Details"):
         st.markdown(f"""
         **Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M")}  
         **Blog Source:** {final_state.get("blog_url", "N/A")}  
@@ -195,7 +187,7 @@ st.set_page_config(
     page_title="Social Media Content Automation", page_icon="🚀", layout="wide"
 )
 
-st.title("🚀 Social Media Content Automation")
+st.title("Social Media Content Automation")
 st.markdown(
     "Generate LinkedIn and X posts from blog content with optional Obsidian notes integration"
 )
@@ -301,7 +293,7 @@ with tab3:
     **Customize the AI's behavior** by adding your own instructions. These will be applied to both LinkedIn and X post generation.
     """)
 
-    with st.expander("💡 Prompt Examples", expanded=False):
+    with st.expander("Prompt Examples", expanded=False):
         st.markdown("""
         **Tone & Style:**
         - "Write in a conversational, friendly tone"
@@ -344,9 +336,7 @@ st.markdown("---")
 col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
-    if st.button(
-        "🚀 Generate Social Media Content", type="primary", use_container_width=True
-    ):
+    if st.button("Generate", type="primary", use_container_width=True):
         if not blog_url and not obsidian_content:
             st.error("❌ Please provide either a blog URL or Obsidian notes content")
         else:
@@ -400,7 +390,7 @@ with col2:
                     status_text.empty()
 
 st.markdown("---")
-st.markdown("**💡 Tips:**")
+st.markdown("**Tips:**")
 st.markdown("""
 - **Blog URL**: Works with most blog platforms and news sites
 - **Obsidian Notes**: Can be used alone or combined with blog content
@@ -419,17 +409,3 @@ with st.sidebar:
     for var in required_vars:
         status = "✅" if os.getenv(var) else "❌"
         st.markdown(f"{status} `{var}`")
-
-    st.markdown("---")
-    st.markdown("**🔧 Features:**")
-    st.markdown("""
-    - Blog content scraping
-    - Obsidian notes integration
-    - Custom prompt injection
-    - LinkedIn post generation
-    - X (Twitter) thread creation
-    - Content validation
-    - 🆕 AI peer review analysis
-    - 🆕 Automated content improvement
-    - Interactive results display
-    """)

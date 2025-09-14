@@ -1,7 +1,6 @@
 import os
 import requests
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
 from typing import TypedDict, List, Optional, Dict, Any
 from bs4 import BeautifulSoup
 import re
@@ -12,14 +11,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-EMAIL_CONFIG = {
-    "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
-    "smtp_port": int(os.getenv("SMTP_PORT", "587")),
-    "email": os.getenv("EMAIL_ADDRESS"),
-    "password": os.getenv("EMAIL_PASSWORD"),
-    "recipient": os.getenv("RECIPIENT_EMAIL"),
-}
-
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash", google_api_key=GEMINI_API_KEY, temperature=0.7
 )
@@ -57,7 +48,6 @@ class AutomationState(TypedDict):
 
 
 def scrape_blog_content(state: AutomationState) -> AutomationState:
-    """Step 1: Scrape blog content from URL"""
     try:
         print(f"🌐 Scraping blog content from: {state['blog_url']}")
 
@@ -110,7 +100,6 @@ def scrape_blog_content(state: AutomationState) -> AutomationState:
 
 
 def generate_blog_summary(state: AutomationState) -> AutomationState:
-    """Step 2: Generate key insights and summary"""
     if state.get("error"):
         return state
 

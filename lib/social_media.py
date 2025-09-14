@@ -4,19 +4,11 @@ import uuid
 
 
 def generate_linkedin_posts(state: AutomationState) -> AutomationState:
-    """Step 3a: Generate LinkedIn post drafts"""
     if state.get("error"):
         return state
 
     try:
         print("💼 Generating LinkedIn posts...")
-
-        custom_instructions = ""
-        if state.get("custom_prompt"):
-            custom_instructions = f"""
-        ## Custom Instructions:
-        {state["custom_prompt"]}
-        """
 
         monday_prompt = f"""
         # Create a LinkedIn teaser post based on this blog summary. 
@@ -28,7 +20,7 @@ def generate_linkedin_posts(state: AutomationState) -> AutomationState:
         DNS is perhaps the largest eventually consistent system in the world. A single request travels through recursive resolvers, root servers, TLDs, and authoritative name servers, with caching at every layer to make it feel instant. The fact that this happens billions of times a second, across every corner of the globe, with so many independent actors cooperating without a central authority, is wild. And don't even get me started on how the internet itself works. Packets, literally just light pulses, race across networks and switches to reach the right machines, processes, and threads in milliseconds. It almost feels magical.
 
         ## Requirements:
-        - 150-200 words exactly
+        - 1000-1200 characters total
         - Engaging hook to grab attention
         - Professional LinkedIn tone
         - Include relevant hashtags
@@ -39,7 +31,8 @@ def generate_linkedin_posts(state: AutomationState) -> AutomationState:
         - Do not use emojis
         - Avoid using words that statiscally more likely to appear in the text generation of gemini-2.5-flash
         - Use acscii to visualize tough parts
-        {custom_instructions}
+        - Individual practitioner voice. Avoid team pronouns ("we", "our", "us", "the team").
+        - Do not explicitly state role or motives (e.g., "I'm a dev", "to grow my network").
         
         Make it compelling enough that people want to know more.
         """
@@ -63,7 +56,7 @@ def generate_linkedin_posts(state: AutomationState) -> AutomationState:
         {state["blog_url"]}
         
         ## Requirements:
-        - 200-300 words exactly
+        - 1000-1200 characters total
         - Reference insights from the blog
         - Include the blog URL
         - Professional but engaging tone
@@ -75,7 +68,8 @@ def generate_linkedin_posts(state: AutomationState) -> AutomationState:
         - Do not use emojis
         - Avoid using words that statiscally more likely to appear in the text generation of gemini-2.5-flash
         - Use acscii to visualize tough parts
-        {custom_instructions}
+        - Individual practitioner voice. Avoid team pronouns ("we", "our", "us", "the team").
+        - Do not explicitly state role or motives (e.g., "I'm a dev", "to grow my network").
         
         This should provide value while encouraging clicks to the full article.
         """
@@ -102,19 +96,11 @@ def generate_linkedin_posts(state: AutomationState) -> AutomationState:
 
 
 def generate_x_posts(state: AutomationState) -> AutomationState:
-    """Step 3b: Generate X (Twitter) post drafts"""
     if state.get("error"):
         return state
 
     try:
         print("🐦 Generating X posts...")
-
-        custom_instructions = ""
-        if state.get("custom_prompt"):
-            custom_instructions = f"""
-        ## Custom Instructions:
-        {state["custom_prompt"]}
-        """
 
         x_prompt = f"""
         # Create a complete X (Twitter) thread based on this blog summary.
@@ -141,7 +127,8 @@ def generate_x_posts(state: AutomationState) -> AutomationState:
         - Use line breaks between numbered tweets
         - Make each tweet valuable on its own
         - Build narrative flow through the thread
-        {custom_instructions}
+        - Individual practitioner voice. Avoid team pronouns ("we", "our", "us", "the team").
+        - Do not explicitly state role or motives (e.g., "I'm a dev", "to grow my network").
         
         Return the 3 posts clearly separated, with the thread content as one cohesive block.
         """
@@ -172,7 +159,6 @@ def generate_x_posts(state: AutomationState) -> AutomationState:
 
 
 def validate_posts(state: AutomationState) -> AutomationState:
-    """Step 4: Validate posts for length, claims, and quality"""
     if state.get("error"):
         return state
 
@@ -183,8 +169,8 @@ def validate_posts(state: AutomationState) -> AutomationState:
 
         for post in state.get("linkedin_posts", []):
             if post.post_type == "Monday Teaser":
-                if not (150 <= post.char_count <= 200):
-                    issue = f"LinkedIn Monday post length issue: {post.char_count} chars (should be 150-200)"
+                if not (1000 <= post.char_count <= 1200):
+                    issue = f"LinkedIn Monday post length issue: {post.char_count} chars (should be 1000-1200)"
                     post.validation_notes.append(issue)
                     validation_issues.append(issue)
 
@@ -196,8 +182,8 @@ def validate_posts(state: AutomationState) -> AutomationState:
                     validation_issues.append(issue)
 
             elif post.post_type == "Thursday Blog Reference":
-                if not (200 <= post.char_count <= 300):
-                    issue = f"LinkedIn Thursday post length issue: {post.char_count} chars (should be 200-300)"
+                if not (1000 <= post.char_count <= 1200):
+                    issue = f"LinkedIn Thursday post length issue: {post.char_count} chars (should be 1000-1200)"
                     post.validation_notes.append(issue)
                     validation_issues.append(issue)
 
@@ -215,6 +201,26 @@ def validate_posts(state: AutomationState) -> AutomationState:
                     issue = f"X thread line {line_num} too long: {len(line)} chars (max 280)"
                     post.validation_notes.append(issue)
                     validation_issues.append(issue)
+
+        banned_team_pronouns = [" we ", " our ", " us ", " the team "]
+        banned_role_phrases = [
+            "i'm a dev",
+            "i am a dev",
+            "to grow my network",
+            "to increase my network",
+        ]
+        for post in state.get("linkedin_posts", []) + state.get("x_posts", []):
+            lower = f" {post.content.lower()} "
+            if any(p in lower for p in banned_team_pronouns):
+                issue = (
+                    "Team-voice pronouns detected (use individual practitioner voice)"
+                )
+                post.validation_notes.append(issue)
+                validation_issues.append(issue)
+            if any(phrase in lower for phrase in banned_role_phrases):
+                issue = "Explicit role/motive statement detected (omit explicit self-description/motives)"
+                post.validation_notes.append(issue)
+                validation_issues.append(issue)
 
         validation_prompt = f"""
         Review these social media posts for potentially unsupported claims or statements that need fact-checking.
@@ -255,7 +261,6 @@ def validate_posts(state: AutomationState) -> AutomationState:
 
 
 def peer_review_agent(state: AutomationState) -> AutomationState:
-    """Peer review agent that analyzes posts and provides improvement feedback"""
     if state.get("error"):
         return state
 
@@ -278,46 +283,62 @@ def peer_review_agent(state: AutomationState) -> AutomationState:
             )
 
             review_prompt = f"""
-            You are an expert social media strategist reviewing this {post.platform} post for improvement opportunities.
-            
+            You are a senior editor reviewing this {post.platform} post. Your job is to deliver surgical, concrete edits that raise clarity and specificity without changing the author's core message or structure.
+
             POST CONTENT:
             {post.content}
-            
+
             POST DETAILS:
             - Platform: {post.platform}
             - Type: {post.post_type}
             - Length: {post.char_count} characters
             - Source: {source_type}
             - Existing validation issues: {post.validation_notes}
-            
-            REVIEW CRITERIA:
-            1. ENGAGEMENT: Hook strength, curiosity gap, emotional appeal
-            2. PLATFORM FIT: {post.platform}-specific best practices and formatting
-            3. CLARITY: Message clarity, readability, flow
-            4. VALUE: Educational/entertainment value for audience
-            5. ACTION: Clear call-to-action or engagement prompt
-            6. BRAND VOICE: Professional yet approachable tone
-            
-            Provide your analysis as a JSON object with this exact structure:
+
+            CRITERIA:
+            - Engagement: precise, curiosity-driven hook without hype.
+            - Specificity: replace abstractions with concrete mechanisms, examples, or numbers.
+            - Platform fit: {post.platform}-native formatting and constraints.
+            - Accuracy: avoid unsupported claims; flag stats without sources.
+            - Style: short sentences, plain language, no emojis, no exclamation points.
+            - Banlist: avoid words like "unlock", "leverage", "cutting-edge", "AI-powered", "revolutionize", "game-changer", "drive impact", "elevate", "innovative" unless quoted from a source.
+            - LinkedIn length: 1000–1200 characters for both teaser and blog-reference posts.
+            - Voice: individual practitioner tone; avoid team pronouns ("we", "our", "us", "the team"). Do not insert explicit role/motive statements.
+
+            WHAT TO RETURN:
+            Return ONLY valid JSON (no markdown, no code fences) with this exact shape and keys:
             {{
-                "overall_score": 7.5,
-                "issues": [
-                    {{
-                        "type": "engagement",
-                        "severity": "medium",
-                        "description": "Hook could be stronger to create more curiosity",
-                        "suggestion": "Start with a surprising statistic or counterintuitive statement",
-                        "example": "Most developers think DNS is simple. They're wrong."
-                    }}
-                ],
-                "strengths": ["Good length", "Clear call to action"],
-                "improvement_priority": "medium",
-                "needs_human_review": false
+              "overall_score": number,
+              "issues": [
+                {{
+                  "type": string,
+                  "severity": "low"|"medium"|"high",
+                  "description": string,
+                  "suggestion": string,
+                  "example": string
+                }}
+              ],
+              "strengths": [string],
+              "actionable_edits": [
+                {{
+                  "target_quote": string,
+                  "rationale": string,
+                  "edit_text": string
+                }}
+              ],
+              "improvement_priority": "low"|"medium"|"high",
+              "needs_human_review": boolean,
+              "preserve_original": true,
+              "banlist_hits": [string]
             }}
-            
-            SEVERITY LEVELS: "low", "medium", "high"
-            IMPROVEMENT PRIORITY: "low", "medium", "high"
-            OVERALL SCORE: 1-10 (10 being perfect)
+
+            EDIT FOCUS:
+            - Prefer adding one concrete example that illustrates mechanism/cause, not just naming concepts.
+            - When applicable, propose one micro ASCII sketch (3-5 lines) OR one simple equation to clarify.
+            - For LinkedIn: ensure <=3 relevant hashtags max; Monday teaser has no links and ends with a question.
+            - For X threads: preserve numbering and per-line <280 chars; final line includes blog URL {state.get("blog_url", "")}.
+
+            Output the JSON only.
             """
 
             try:
@@ -369,7 +390,6 @@ def peer_review_agent(state: AutomationState) -> AutomationState:
 
 
 def content_improver_agent(state: AutomationState) -> AutomationState:
-    """Content improver agent that generates improved versions based on peer review feedback"""
     if state.get("error"):
         return state
 
@@ -456,43 +476,42 @@ def content_improver_agent(state: AutomationState) -> AutomationState:
 def improve_post_content(
     original_post: SocialMediaPost, feedback: dict, state: AutomationState
 ) -> SocialMediaPost:
-    """Generate improved version of a single post based on feedback"""
     try:
         issues = feedback.get("issues", [])
         if not issues:
             return original_post
 
-        custom_instructions = ""
-        if state.get("custom_prompt"):
-            custom_instructions = f"""
-        ## Custom Instructions:
-        {state["custom_prompt"]}
-        """
-
         improvement_prompt = f"""
-        Improve this {original_post.platform} post based on the peer review feedback.
-        
+        Improve this {original_post.platform} post based on the peer review feedback. Keep the author's core idea and structure. Make precise, minimal edits that increase specificity and clarity.
+
         ORIGINAL POST:
         {original_post.content}
-        
-        POST REQUIREMENTS:
-        - Platform: {original_post.platform}
-        - Type: {original_post.post_type}
-        - Target length: {original_post.char_count} characters (maintain similar length)
-        
-        PEER REVIEW FEEDBACK:
-        Issues to address: {json.dumps(issues, indent=2)}
+
+        CONTEXT (may use for concrete examples):
+        Blog summary (if available): {state.get("blog_summary", "")}
+
+        REQUIREMENTS (platform-aware):
+        - Target length: {original_post.char_count} characters (stay within ±10%).
+        - Style: short sentences, plain language, no emojis, no exclamation points, avoid hype.
+        - Banlist: avoid "unlock", "leverage", "cutting-edge", "AI-powered", "revolutionize", "game-changer", "drive impact", "elevate", "innovative".
+        - Specificity: add 1 concrete example grounded in the topic or summary. Prefer one micro ASCII sketch (3-5 lines) OR one simple equation if it clarifies.
+        - Preserve any numbered or bulleted structure present in the original.
+        - Voice: individual practitioner. Avoid team pronouns ("we", "our", "us", "the team"). Do not add explicit role/motive statements.
+
+        - If Platform = LinkedIn and Type = "Monday Teaser":
+          - 1000-1200 characters, no links, end with a genuine question, <=3 relevant hashtags.
+        - If Platform = LinkedIn and Type = "Thursday Blog Reference":
+          - 1000-1200 characters, include the blog URL {state.get("blog_url", "")}, 1-2 concrete takeaways, clear CTA to read more, <=3 relevant hashtags.
+        - If Platform = X (Twitter) and Type contains "Thread":
+          - Preserve numbered thread format, each line < 280 chars, final line includes blog URL {state.get("blog_url", "")}.
+
+        PEER REVIEW FEEDBACK (address all issues, keep strengths):
+        {json.dumps(issues, indent=2)}
         Strengths to maintain: {feedback.get("strengths", [])}
-        
-        IMPROVEMENT GUIDELINES:
-        1. Address the specific issues mentioned in the feedback
-        2. Maintain the core message and key insights
-        3. Preserve the strengths identified
-        4. Keep the same platform-appropriate formatting
-        5. Maintain professional yet engaging tone
-        {custom_instructions}
-        
-        Return ONLY the improved post content, nothing else.
+
+        OUTPUT:
+        - Return ONLY the improved post content, nothing else. No JSON, no prefixes, no backticks.
+        - Keep the voice human and specific. Do not add filler or buzzwords.
         """
 
         response = llm.invoke(improvement_prompt)

@@ -16,8 +16,6 @@ from .social_media import (
 
 
 def create_workflow():
-    """Create the LangGraph workflow"""
-
     workflow = StateGraph(AutomationState)
 
     workflow.add_node("scraper", scrape_blog_content)
@@ -43,7 +41,6 @@ def create_workflow():
 
 
 def run_automation(blog_url: str, obsidian_notes: str = "", custom_prompt: str = ""):
-    """Main function to run the social media automation"""
     print("🚀 Starting Social Media Content Automation")
     print("=" * 50)
 

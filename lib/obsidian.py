@@ -5,7 +5,6 @@ from .utils import AutomationState
 
 
 def read_obsidian_notes(file_path: str) -> str:
-    """Read and process Obsidian markdown notes"""
     try:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Obsidian file not found: {file_path}")
@@ -25,7 +24,6 @@ def read_obsidian_notes(file_path: str) -> str:
 
 
 def process_obsidian_content(state: AutomationState) -> AutomationState:
-    """Process Obsidian notes if provided"""
     if not state.get("obsidian_notes"):
         return state
 
