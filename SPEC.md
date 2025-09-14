@@ -1,147 +1,137 @@
-# 📝 Tech Spec – Blog → Social Post Automation Script (LangGraph-based)
+# 📄 Technical Specification: Agentic Social Media Automation
 
 ## 1. Objective
 
-Automatically generate **LinkedIn** and **X** post drafts from blog content and deliver them to your email inbox.
-
-- **No auto-publishing** → human-in-the-loop for posting.
-- **Validation step** ensures posts don’t misrepresent the blog.
+Automate the lifecycle of content creation from **idea → teaser → blog → final posts** using an **agentic workflow**.
+The system adapts to context (phase of content, blog status) and loops through validation, peer review, and improvement until posts are ready for publishing.
 
 ---
 
-## 2. Inputs
+## 2. Functional Requirements
 
-- **Blog Link** (URL to a scraping-friendly blog).
+### Inputs
 
----
+- **Hard-coded constants**:
 
-## 3. Outputs
+  - `IDEA_TEXT`: seed idea.
+  - `OBSIDIAN_NOTES`: research + draft material.
+  - `BLOG_URL`: empty until blog is published, then filled with the live link.
 
-- A single **weekly email** containing:
+### State Fields
 
-  - **LinkedIn Monday Post** (teaser, curiosity-driven).
-  - **LinkedIn Thursday Post** (directly referencing the blog).
-  - **X Daily Posts** (short, punchy posts for each day).
-
-- Validation notes (⚠️) if content seems unsupported by the blog.
-
----
-
-## 4. Automation Rules
-
-- **LinkedIn**
-
-  - Monday → teaser post (150–200 words, no link).
-  - Thursday → blog reference post (200–300 words, includes link).
-
-- **X**
-
-  - Generate 1–3 daily posts (≤280 chars each).
-
-- **Validation**
-
-  - Posts must align with blog facts.
-  - Length and format must match platform constraints.
-
-- **Delivery**
-
-  - Email sent every **Sunday night** (to prepare for upcoming week).
+- `idea_text`: string (initial idea).
+- `obsidian_notes`: string (research content).
+- `blog_url`: string (empty until blog is published).
+- `phase`: string (`idea`, `teaser`, `draft`, `final`).
+- `blog_content`: string (scraped from blog_url).
+- `blog_summary`: string (condensed version of blog).
+- `linkedin_posts`: list (generated LinkedIn posts).
+- `x_posts`: list (generated X posts).
+- `validation_issues`: list (problems found in draft posts).
+- `peer_review_feedback`: dict (feedback from review agent).
+- `improved_linkedin_posts`: list.
+- `improved_x_posts`: list.
+- `requires_human_review`: bool (true if automation fails after retries).
 
 ---
 
-## 5. Architecture (LangGraph Flow)
+## 3. Workflow Structure
 
-```mermaid
-graph TD
-    A[Input: Blog Link] --> B[Scraper]
-    B --> C[Summarizer]
-    C --> D[Content Generator]
-    D --> V[Validator]
-    V --> E[Scheduler]
-    E --> F[Email Composer]
-    F --> G[SMTP Sender]
-```
+### Nodes
 
----
+1. **capture_idea**
 
-## 6. Components
+   - Stores hard-coded `IDEA_TEXT`.
 
-### 6.1 Scraper
+2. **obsidian_research**
 
-- **Library**: `requests` + `BeautifulSoup`
-- Extract blog title, meta description, and body text.
+   - Processes `OBSIDIAN_NOTES`.
+   - Expands ideas, adds context.
 
-### 6.2 Summarizer
+3. **planner_agent**
 
-- **LLM call** (Gemini or OpenAI)
-- Generate structured summary (abstract, key insights, hooks).
+   - Decides next step:
 
-### 6.3 Content Generator
+     - If `blog_url` empty + phase=idea → `teaser_generator`.
+     - If `blog_url` empty + phase=draft → `blog_drafter`.
+     - If `blog_url` filled → `scraper`.
 
-- **LLM prompts** tuned for:
+4. **teaser_generator**
 
-  - LinkedIn teaser (story-driven, curiosity).
-  - LinkedIn reference (informative, includes blog link).
-  - X posts (short, punchy insights).
+   - Generates LinkedIn + X teaser posts.
+   - Outputs to `linkedin_posts`, `x_posts`.
 
-### 6.4 Validator
+5. **blog_drafter**
 
-- **LLM check**: Compare generated posts with blog text.
-- **Rule check**: Word count for LinkedIn, char count for X.
-- If mismatch → mark ⚠️.
+   - Converts `obsidian_notes` into blog draft (to be published manually).
 
-### 6.5 Scheduler
+6. **scraper**
 
-- Assigns posts to correct days (Mon/Thu for LinkedIn, daily for X).
+   - Scrapes content from `blog_url`.
+   - Populates `blog_content`.
 
-### 6.6 Email Composer
+7. **summarizer**
 
-- Formats email with sections: LinkedIn Monday, LinkedIn Thursday, X posts.
-- Adds validation notes if needed.
+   - Summarizes blog into `blog_summary`.
 
-### 6.7 SMTP Sender
+8. **final_post_generator**
 
-- **Library**: `smtplib` (simple Gmail/Yahoo/Outlook SMTP).
-- Sends email with subject `Weekly Content Pack – {date}`.
+   - Generates LinkedIn + X posts linking to the blog.
 
----
+9. **validator**
 
-## 7. Example Email Output
+   - Checks posts for style, tone, platform limits.
 
-**Subject:** Weekly Content Pack – Sept 8, 2025
+10. **peer_reviewer**
 
-**Body:**
+    - Gives structured improvement suggestions.
 
-👔 **LinkedIn Monday (Teaser)** ✅ Validated
-_"Most people misunderstand SHAP values for Gradient Boosted Trees. Here’s why that matters for explainable AI…"_
+11. **content_improver**
 
-👔 **LinkedIn Thursday (Blog Reference)** ⚠️ Needs Review
-_"SHAP always gives the true causal effect."_
+    - Rewrites posts based on feedback.
 
-> ⚠️ The blog does not make this claim. Please edit.
+12. **self_evaluator**
 
-🐦 **X Daily Posts**
+    - Scores posts; if score < threshold, loops back to improver.
 
-1. "Most 'explainability' tools aren’t as objective as they look. SHAP values for GBTs prove it 👇"
-2. "Gradient Boosted Trees are powerful, but interpreting them without caution is risky."
+13. **recovery_agent**
+
+    - Handles errors, sets `requires_human_review=True` if unresolved.
 
 ---
 
-## 8. Tech Stack
+## 4. Control Flow
 
-- **Python**
+1. **Entry Point** → `capture_idea`.
+2. **Planner-driven routing**:
 
-  - `requests`, `beautifulsoup4` → scraping
-  - `smtplib` → email
-  - `apscheduler` or simple cron → scheduling
+   - `teaser_generator` (for Monday teaser).
+   - `blog_drafter` (for Thursday draft).
+   - `scraper → summarizer → final_post_generator` (after blog is published).
 
-- **LangGraph** → Orchestration of nodes
-- **LLM API** → Gemini or OpenAI
+3. **Validation loop**:
+
+   - `validator` → if invalid → `peer_reviewer → content_improver → validator`.
+   - If 3 retries fail → mark `requires_human_review=True` → END.
+
+4. **Reflection loop**:
+
+   - `self_evaluator` → if score < threshold → `content_improver`.
+
+5. **End State**:
+
+   - Posts ready, or flagged for human review.
 
 ---
 
-## 9. Limitations
+## 5. Non-Functional Notes
 
-- Script-level → no database, no retries, no scaling.
-- Validation depends on LLM consistency.
-- Manual posting still required (intended).
+- **Simplicity**: Inputs are hard-coded for now.
+- **Extensibility**: Later, inputs can be read from CLI or config.
+- **Parallelism**: LinkedIn + X post generation runs in parallel.
+- **Error Handling**: Any exception routes to `recovery_agent`.
+- **Human-in-the-Loop**: If validation fails repeatedly, automation exits gracefully.
+
+---
+
+✅ This keeps it **functional**, not over-engineered. You now have a blueprint that matches your _real flow_ (idea → teaser → blog → final posts) while keeping agentic flexibility (planner, loops, retries, scoring).

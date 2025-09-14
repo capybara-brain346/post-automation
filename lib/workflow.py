@@ -4,6 +4,12 @@ from .utils import (
     AutomationState,
     scrape_blog_content,
     generate_blog_summary,
+    capture_idea,
+    planner_agent,
+    teaser_generator,
+    blog_drafter,
+    self_evaluator,
+    recovery_agent,
 )
 from .obsidian import process_obsidian_content
 from .social_media import (
@@ -15,50 +21,185 @@ from .social_media import (
 )
 
 
+def should_generate_teaser(state: AutomationState) -> str:
+    if not state["blog_url"] and state["phase"] == "teaser":
+        return "teaser_generator"
+    elif state["blog_url"] and state["phase"] == "final":
+        return "scraper"
+    return "planner_agent"
+
+
+def should_generate_blog_draft(state: AutomationState) -> str:
+    if not state["blog_url"] and state["phase"] == "draft":
+        return "blog_drafter"
+    elif state["blog_url"] and state["phase"] == "final":
+        return "scraper"
+    return "planner_agent"
+
+
+def should_scrape_blog(state: AutomationState) -> str:
+    if state["blog_url"] and state["phase"] == "final":
+        return "scraper"
+    return "END"
+
+
+def should_validate_or_end(state: AutomationState) -> str:
+    if state.get("error"):
+        return "recovery_agent"
+    if state.get("linkedin_posts") or state.get("x_posts"):
+        return "validator"
+    return "END"
+
+
+def should_improve_or_evaluate(state: AutomationState) -> str:
+    if state.get("error"):
+        return "recovery_agent"
+    if state.get("validation_issues"):
+        return "peer_reviewer"
+    return "self_evaluator"
+
+
+def should_improve_or_end(state: AutomationState) -> str:
+    if state.get("error"):
+        return "recovery_agent"
+    peer_feedback = state.get("peer_review_feedback", {})
+    needs_improvement = any(
+        feedback.get("improvement_priority") in ["medium", "high"]
+        for feedback in peer_feedback.values()
+    )
+    if needs_improvement:
+        return "content_improver"
+    return "self_evaluator"
+
+
+def should_loop_or_end(state: AutomationState) -> str:
+    if state.get("error"):
+        return "recovery_agent"
+    if state.get("requires_human_review"):
+        return "END"
+
+    # Check if we need another validation loop (max 3 retries)
+    retry_count = getattr(state, "_retry_count", 0)
+    if retry_count < 3 and state.get("validation_issues"):
+        state["_retry_count"] = retry_count + 1
+        return "validator"
+
+    return "END"
+
+
 def create_workflow():
     workflow = StateGraph(AutomationState)
 
+    workflow.add_node("capture_idea", capture_idea)
+    workflow.add_node("obsidian_research", process_obsidian_content)
+    workflow.add_node("planner_agent", planner_agent)
+    workflow.add_node("teaser_generator", teaser_generator)
+    workflow.add_node("blog_drafter", blog_drafter)
     workflow.add_node("scraper", scrape_blog_content)
-    workflow.add_node("obsidian_processor", process_obsidian_content)
     workflow.add_node("summarizer", generate_blog_summary)
-    workflow.add_node("linkedin_generator", generate_linkedin_posts)
+    workflow.add_node("final_post_generator", generate_linkedin_posts)
     workflow.add_node("x_generator", generate_x_posts)
     workflow.add_node("validator", validate_posts)
     workflow.add_node("peer_reviewer", peer_review_agent)
     workflow.add_node("content_improver", content_improver_agent)
+    workflow.add_node("self_evaluator", self_evaluator)
+    workflow.add_node("recovery_agent", recovery_agent)
 
-    workflow.set_entry_point("scraper")
-    workflow.add_edge("scraper", "obsidian_processor")
-    workflow.add_edge("obsidian_processor", "summarizer")
-    workflow.add_edge("summarizer", "linkedin_generator")
-    workflow.add_edge("linkedin_generator", "x_generator")
-    workflow.add_edge("x_generator", "validator")
-    workflow.add_edge("validator", "peer_reviewer")
-    workflow.add_edge("peer_reviewer", "content_improver")
-    workflow.add_edge("content_improver", END)
+    workflow.set_entry_point("capture_idea")
+
+    workflow.add_edge("capture_idea", "obsidian_research")
+    workflow.add_edge("obsidian_research", "planner_agent")
+
+    workflow.add_conditional_edges(
+        "planner_agent",
+        should_generate_teaser,
+        {
+            "teaser_generator": "teaser_generator",
+            "planner_agent": "planner_agent",
+            "scraper": "scraper",
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "teaser_generator",
+        should_generate_blog_draft,
+        {
+            "blog_drafter": "blog_drafter",
+            "planner_agent": "planner_agent",
+            "scraper": "scraper",
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "blog_drafter", should_scrape_blog, {"scraper": "scraper", "END": END}
+    )
+
+    workflow.add_edge("scraper", "summarizer")
+    workflow.add_edge("summarizer", "final_post_generator")
+    workflow.add_edge("final_post_generator", "x_generator")
+
+    workflow.add_conditional_edges(
+        "x_generator",
+        should_validate_or_end,
+        {"validator": "validator", "recovery_agent": "recovery_agent", "END": END},
+    )
+
+    workflow.add_conditional_edges(
+        "validator",
+        should_improve_or_evaluate,
+        {
+            "peer_reviewer": "peer_reviewer",
+            "self_evaluator": "self_evaluator",
+            "recovery_agent": "recovery_agent",
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "peer_reviewer",
+        should_improve_or_end,
+        {
+            "content_improver": "content_improver",
+            "self_evaluator": "self_evaluator",
+            "recovery_agent": "recovery_agent",
+        },
+    )
+
+    workflow.add_edge("content_improver", "validator")
+
+    workflow.add_conditional_edges(
+        "self_evaluator",
+        should_loop_or_end,
+        {"validator": "validator", "recovery_agent": "recovery_agent", "END": END},
+    )
+
+    workflow.add_edge("recovery_agent", END)
 
     return workflow.compile()
 
 
-def run_automation(blog_url: str, obsidian_notes: str = "", custom_prompt: str = ""):
-    print("🚀 Starting Social Media Content Automation")
+def run_automation(
+    idea_text: str, obsidian_notes: str = "", blog_url: str = "", phase: str = "idea"
+):
+    print("🚀 Starting Agentic Social Media Automation")
     print("=" * 50)
 
     initial_state: AutomationState = {
+        "idea_text": idea_text,
+        "obsidian_notes": obsidian_notes,
         "blog_url": blog_url,
+        "phase": phase,
         "blog_content": "",
         "blog_summary": "",
-        "obsidian_notes": obsidian_notes,
-        "custom_prompt": custom_prompt,
         "linkedin_posts": [],
         "x_posts": [],
         "validation_issues": [],
-        "error": None,
         "peer_review_feedback": {},
         "improved_linkedin_posts": [],
         "improved_x_posts": [],
-        "improvement_summary": [],
         "requires_human_review": False,
+        "error": None,
+        "custom_prompt": "",
+        "improvement_summary": [],
     }
 
     app = create_workflow()
@@ -66,14 +207,19 @@ def run_automation(blog_url: str, obsidian_notes: str = "", custom_prompt: str =
 
     if final_state.get("error"):
         print(f"\n❌ Automation failed: {final_state['error']}")
+    elif final_state.get("requires_human_review"):
+        print("\n⚠️ Automation completed but requires human review")
     else:
         print("\n🎉 Automation completed successfully!")
+
+    print(f"📊 Phase: {final_state.get('phase', 'unknown')}")
+    if final_state.get("linkedin_posts"):
+        print(f"📊 Generated {len(final_state['linkedin_posts'])} LinkedIn posts")
+    if final_state.get("x_posts"):
+        print(f"📊 Generated {len(final_state['x_posts'])} X posts")
+    if final_state.get("validation_issues"):
         print(
-            f"📊 Generated {len(final_state['linkedin_posts'])} LinkedIn posts and {len(final_state['x_posts'])} X posts"
+            f"⚠️  Found {len(final_state['validation_issues'])} validation issues for review"
         )
-        if final_state["validation_issues"]:
-            print(
-                f"⚠️  Found {len(final_state['validation_issues'])} validation issues for review"
-            )
 
     return final_state

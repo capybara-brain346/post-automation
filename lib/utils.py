@@ -31,20 +31,22 @@ class SocialMediaPost:
 
 
 class AutomationState(TypedDict):
+    idea_text: str
+    obsidian_notes: str
     blog_url: str
+    phase: str
     blog_content: str
     blog_summary: str
-    obsidian_notes: str
-    custom_prompt: str
     linkedin_posts: List[SocialMediaPost]
     x_posts: List[SocialMediaPost]
     validation_issues: List[str]
-    error: Optional[str]
     peer_review_feedback: Dict[str, Any]
     improved_linkedin_posts: List[SocialMediaPost]
     improved_x_posts: List[SocialMediaPost]
-    improvement_summary: List[str]
     requires_human_review: bool
+    error: Optional[str]
+    custom_prompt: str
+    improvement_summary: List[str]
 
 
 def scrape_blog_content(state: AutomationState) -> AutomationState:
@@ -131,4 +133,195 @@ def generate_blog_summary(state: AutomationState) -> AutomationState:
         print(f"❌ {error_msg}")
         state["error"] = error_msg
 
+    return state
+
+
+def capture_idea(state: AutomationState) -> AutomationState:
+    print("💡 Capturing initial idea...")
+    print(f"✅ Idea captured: {state['idea_text'][:100]}...")
+    return state
+
+
+def planner_agent(state: AutomationState) -> AutomationState:
+    print("🎯 Planning next step based on current state...")
+
+    if not state["blog_url"] and state["phase"] == "idea":
+        state["phase"] = "teaser"
+        print("📅 Planning: Generate teaser posts for Monday")
+    elif not state["blog_url"] and state["phase"] == "teaser":
+        state["phase"] = "draft"
+        print("📝 Planning: Create blog draft for Thursday")
+    elif state["blog_url"] and state["phase"] == "draft":
+        state["phase"] = "final"
+        print("🌐 Planning: Blog is published, generate final posts")
+    elif state["blog_url"] and state["phase"] == "final":
+        print("🌐 Planning: Ready to scrape blog and generate final posts")
+    else:
+        print("✅ Planning complete")
+
+    return state
+
+
+def teaser_generator(state: AutomationState) -> AutomationState:
+    if state.get("error"):
+        return state
+
+    try:
+        print("🎭 Generating teaser posts...")
+
+        teaser_prompt = f"""
+        Create engaging teaser posts based on this idea and research notes.
+        
+        Idea: {state["idea_text"]}
+        Research Notes: {state["obsidian_notes"][:2000] if state["obsidian_notes"] else "None"}
+        
+        Generate:
+        1. A LinkedIn teaser post (1000-1200 characters) that creates curiosity without revealing everything
+        2. An X thread teaser (3-4 tweets) that hints at the upcoming content
+        
+        Requirements:
+        - NO LINKS (this is a teaser before the blog is published)
+        - Create anticipation for the full content coming later
+        - Individual practitioner voice
+        - No emojis or exclamation points
+        """
+
+        response = llm.invoke(teaser_prompt)
+
+        # For now, create placeholder posts - this would need proper parsing
+        linkedin_teaser = SocialMediaPost(
+            content=response.content[:1200],
+            platform="LinkedIn",
+            post_type="Monday Teaser",
+            scheduled_day="Monday",
+            char_count=len(response.content[:1200]),
+            validation_notes=[],
+        )
+
+        x_teaser = SocialMediaPost(
+            content=response.content[1200:2400]
+            if len(response.content) > 1200
+            else response.content,
+            platform="X",
+            post_type="X Teaser",
+            scheduled_day="Monday",
+            char_count=len(response.content[1200:2400])
+            if len(response.content) > 1200
+            else len(response.content),
+            validation_notes=[],
+        )
+
+        state["linkedin_posts"] = [linkedin_teaser]
+        state["x_posts"] = [x_teaser]
+        print("✅ Teaser posts generated")
+
+    except Exception as e:
+        error_msg = f"Failed to generate teaser posts: {str(e)}"
+        print(f"❌ {error_msg}")
+        state["error"] = error_msg
+
+    return state
+
+
+def blog_drafter(state: AutomationState) -> AutomationState:
+    if state.get("error"):
+        return state
+
+    try:
+        print("📝 Creating blog draft...")
+
+        draft_prompt = f"""
+        Create a comprehensive blog post draft based on the initial idea and research notes.
+        
+        Initial Idea: {state["idea_text"]}
+        Research Notes: {state["obsidian_notes"]}
+        
+        Create a well-structured blog post with:
+        - Compelling title
+        - Introduction that hooks the reader
+        - Main content sections with clear headings
+        - Concrete examples and explanations
+        - Conclusion with key takeaways
+        
+        Style: Technical but accessible, individual practitioner voice, no hype words.
+        """
+
+        response = llm.invoke(draft_prompt)
+
+        # Store the draft in blog_content for now (in real implementation, this would be saved to a file)
+        state["blog_content"] = response.content
+        print("✅ Blog draft created (ready for manual publishing)")
+
+    except Exception as e:
+        error_msg = f"Failed to create blog draft: {str(e)}"
+        print(f"❌ {error_msg}")
+        state["error"] = error_msg
+
+    return state
+
+
+def self_evaluator(state: AutomationState) -> AutomationState:
+    if state.get("error"):
+        return state
+
+    try:
+        print("🔍 Self-evaluating content quality...")
+
+        all_posts = state.get("improved_linkedin_posts", []) + state.get(
+            "improved_x_posts", []
+        )
+        if not all_posts:
+            all_posts = state.get("linkedin_posts", []) + state.get("x_posts", [])
+
+        if not all_posts:
+            print("⚠️ No posts to evaluate")
+            return state
+
+        total_score = 0
+        post_count = 0
+
+        for post in all_posts:
+            score = getattr(post, "peer_review_score", 7.0)
+            total_score += score
+            post_count += 1
+
+        average_score = total_score / post_count if post_count > 0 else 7.0
+        threshold = 8.0
+
+        if average_score < threshold:
+            print(
+                f"⚠️ Average quality score {average_score:.1f} below threshold {threshold}"
+            )
+            state["requires_human_review"] = True
+        else:
+            print(f"✅ Quality evaluation passed: {average_score:.1f}/10")
+
+    except Exception as e:
+        error_msg = f"Self-evaluation failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        state["error"] = error_msg
+
+    return state
+
+
+def recovery_agent(state: AutomationState) -> AutomationState:
+    print("🚨 Recovery agent activated")
+
+    if state.get("error"):
+        print(f"❌ Handling error: {state['error']}")
+
+        # Attempt basic recovery
+        if (
+            "timeout" in state["error"].lower()
+            or "connection" in state["error"].lower()
+        ):
+            print("🔄 Network error detected - marking for retry")
+        elif "api" in state["error"].lower():
+            print("🔑 API error detected - check credentials")
+        else:
+            print("❓ Unknown error - marking for human review")
+
+        state["requires_human_review"] = True
+
+    print("✅ Recovery processing complete")
     return state
