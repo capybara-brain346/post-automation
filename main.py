@@ -1,575 +1,435 @@
 import os
-import smtplib
-import requests
+import streamlit as st
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from typing import TypedDict, List, Optional
-from bs4 import BeautifulSoup
-import re
-from dataclasses import dataclass
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.graph import StateGraph, END
+from workflow import run_automation
+from obsidian import read_obsidian_notes
+from datetime import datetime, timedelta
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
-EMAIL_CONFIG = {
-    "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
-    "smtp_port": int(os.getenv("SMTP_PORT", "587")),
-    "email": os.getenv("EMAIL_ADDRESS"),
-    "password": os.getenv("EMAIL_PASSWORD"),
-    "recipient": os.getenv("RECIPIENT_EMAIL"),
-}
 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash", google_api_key=GEMINI_API_KEY, temperature=0.7
+def display_results_in_streamlit(final_state):
+    """Display the generated content directly in Streamlit"""
+    st.success("🎉 Content generation completed successfully!")
+
+    today = datetime.now()
+    next_monday = today + timedelta(days=(7 - today.weekday()))
+    next_thursday = next_monday + timedelta(days=3)
+
+    has_improved_posts = final_state.get("improved_linkedin_posts") or final_state.get(
+        "improved_x_posts"
+    )
+
+    if has_improved_posts:
+        post_version = st.radio(
+            "Select version to display:",
+            ["✨ Improved Posts (Recommended)", "📝 Original Posts"],
+            index=0,
+        )
+        show_improved = post_version.startswith("✨")
+    else:
+        show_improved = False
+
+    st.markdown("---")
+
+    # LinkedIn Posts Section
+    st.header("💼 LinkedIn Posts")
+
+    linkedin_posts_to_show = (
+        final_state.get("improved_linkedin_posts", [])
+        if show_improved
+        else final_state.get("linkedin_posts", [])
+    )
+
+    if linkedin_posts_to_show and len(linkedin_posts_to_show) >= 2:
+        # Monday Teaser
+        with st.container():
+            st.subheader(f"📅 Monday Teaser ({next_monday.strftime('%B %d')})")
+            monday_post = linkedin_posts_to_show[0]
+
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.info(f"**Length:** {monday_post.char_count} characters")
+            with col2:
+                if (
+                    hasattr(monday_post, "peer_review_score")
+                    and monday_post.peer_review_score
+                ):
+                    st.metric(
+                        "Quality Score", f"{monday_post.peer_review_score:.1f}/10"
+                    )
+            with col3:
+                if st.button("📋 Copy", key="copy_monday"):
+                    st.success("Copied!")
+
+            st.text_area(
+                "Content:", monday_post.content, height=150, key="monday_content"
+            )
+
+            if monday_post.validation_notes:
+                st.warning(f"⚠️ Issues: {', '.join(monday_post.validation_notes)}")
+
+            if (
+                hasattr(monday_post, "is_improved_version")
+                and monday_post.is_improved_version
+            ):
+                st.success(f"✨ Improved: {', '.join(monday_post.improvement_notes)}")
+
+        st.markdown("---")
+
+        # Thursday Blog Reference
+        with st.container():
+            st.subheader(
+                f"📅 Thursday Blog Reference ({next_thursday.strftime('%B %d')})"
+            )
+            thursday_post = linkedin_posts_to_show[1]
+
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.info(f"**Length:** {thursday_post.char_count} characters")
+            with col2:
+                if (
+                    hasattr(thursday_post, "peer_review_score")
+                    and thursday_post.peer_review_score
+                ):
+                    st.metric(
+                        "Quality Score", f"{thursday_post.peer_review_score:.1f}/10"
+                    )
+            with col3:
+                if st.button("📋 Copy", key="copy_thursday"):
+                    st.success("Copied!")
+
+            st.text_area(
+                "Content:", thursday_post.content, height=200, key="thursday_content"
+            )
+
+            if thursday_post.validation_notes:
+                st.warning(f"⚠️ Issues: {', '.join(thursday_post.validation_notes)}")
+
+            if (
+                hasattr(thursday_post, "is_improved_version")
+                and thursday_post.is_improved_version
+            ):
+                st.success(f"✨ Improved: {', '.join(thursday_post.improvement_notes)}")
+
+    st.markdown("---")
+
+    # X Thread Section
+    st.header("🐦 X Thread")
+
+    x_posts_to_show = (
+        final_state.get("improved_x_posts", [])
+        if show_improved
+        else final_state.get("x_posts", [])
+    )
+
+    if x_posts_to_show and len(x_posts_to_show) > 0:
+        post = x_posts_to_show[0]
+
+        with st.container():
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.info(f"**Length:** {post.char_count} characters total")
+            with col2:
+                if hasattr(post, "peer_review_score") and post.peer_review_score:
+                    st.metric("Quality Score", f"{post.peer_review_score:.1f}/10")
+            with col3:
+                if st.button("📋 Copy", key="copy_x_thread"):
+                    st.success("Copied!")
+
+            st.text_area(
+                "X Thread Content:",
+                post.content,
+                height=400,
+                key="x_thread_content",
+            )
+
+            if post.validation_notes:
+                st.warning(f"⚠️ Issues: {', '.join(post.validation_notes)}")
+
+            if hasattr(post, "is_improved_version") and post.is_improved_version:
+                st.success(f"✨ Improved: {', '.join(post.improvement_notes)}")
+
+    # Peer Review & Improvements Section
+    if final_state.get("improvement_summary"):
+        st.markdown("---")
+        st.header("🔄 Peer Review & Improvements")
+
+        with st.expander("View improvement details", expanded=False):
+            for improvement in final_state["improvement_summary"]:
+                st.success(f"✨ {improvement}")
+
+            if final_state.get("requires_human_review"):
+                st.warning("⚠️ Some posts require human review due to quality concerns")
+
+    # Validation Issues Section
+    if final_state.get("validation_issues"):
+        st.markdown("---")
+        st.header("⚠️ Validation Notes")
+
+        with st.expander("Review flagged items", expanded=True):
+            for issue in final_state["validation_issues"]:
+                st.warning(issue)
+            st.info("Please review flagged items before posting.")
+
+    # Generation Info
+    st.markdown("---")
+    with st.expander("ℹ️ Generation Details"):
+        st.markdown(f"""
+        **Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M")}  
+        **Blog Source:** {final_state.get("blog_url", "N/A")}  
+        **LinkedIn Posts:** {len(final_state.get("linkedin_posts", []))}  
+        **X Thread Parts:** {len(final_state.get("x_posts", []))}  
+        **Validation Issues:** {len(final_state.get("validation_issues", []))}  
+        **Improvements Made:** {len(final_state.get("improvement_summary", []))}
+        """)
+
+        if final_state.get("custom_prompt"):
+            st.markdown("**Custom Instructions Used:** ✅")
+        if final_state.get("obsidian_notes"):
+            st.markdown("**Obsidian Notes Integrated:** ✅")
+
+
+st.set_page_config(
+    page_title="Social Media Content Automation", page_icon="🚀", layout="wide"
 )
 
+st.title("🚀 Social Media Content Automation")
+st.markdown(
+    "Generate LinkedIn and X posts from blog content with optional Obsidian notes integration"
+)
 
-@dataclass
-class SocialMediaPost:
-    content: str
-    platform: str
-    post_type: str
-    scheduled_day: str
-    char_count: int
-    validation_notes: List[str]
+required_vars = [
+    "GEMINI_API_KEY",
+]
 
+missing_vars = [var for var in required_vars if not os.getenv(var)]
 
-class AutomationState(TypedDict):
-    blog_url: str
-    blog_content: str
-    blog_summary: str
-    linkedin_posts: List[SocialMediaPost]
-    x_posts: List[SocialMediaPost]
-    email_content: str
-    validation_issues: List[str]
-    error: Optional[str]
+if missing_vars:
+    st.error(f"❌ Missing required environment variables: {', '.join(missing_vars)}")
+    st.info("Please set the following environment variables:")
+    for var in missing_vars:
+        st.code(f"export {var}='your_value_here'")
+    st.stop()
 
+tab1, tab2, tab3 = st.tabs(["🌐 Blog URL", "📝 Obsidian Notes", "🎯 Custom Prompt"])
 
-def scrape_blog_content(state: AutomationState) -> AutomationState:
-    """Step 1: Scrape blog content from URL"""
-    try:
-        print(f"🌐 Scraping blog content from: {state['blog_url']}")
+blog_url = ""
+obsidian_content = ""
+custom_prompt = ""
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        response = requests.get(state["blog_url"], headers=headers, timeout=30)
-        response.raise_for_status()
+with tab1:
+    st.header("Blog URL Input")
+    blog_url = st.text_input(
+        "Enter the blog URL to process:",
+        placeholder="https://example.com/blog-post",
+        help="Paste the URL of the blog post you want to generate social media content from",
+    )
 
-        soup = BeautifulSoup(response.content, "html.parser")
+    if blog_url:
+        st.success(f"✅ Blog URL set: {blog_url}")
 
-        for script in soup(["script", "style", "nav", "footer", "header"]):
-            script.decompose()
+with tab2:
+    st.header("Obsidian Notes Integration")
 
-        content_selectors = [
-            "article",
-            "main",
-            ".post-content",
-            ".entry-content",
-            ".content",
-            "#content",
-            ".post-body",
-            ".article-content",
-        ]
+    input_method = st.radio(
+        "Choose input method:",
+        ["Upload file", "Enter file path", "Paste content directly"],
+    )
 
-        content = ""
-        for selector in content_selectors:
-            content_elem = soup.select_one(selector)
-            if content_elem:
-                content = content_elem.get_text()
-                break
-
-        if not content:
-            content = soup.get_text()
-
-        content = re.sub(r"\s+", " ", content).strip()
-
-        title_elem = soup.find("title") or soup.find("h1")
-        title = title_elem.get_text().strip() if title_elem else "Blog Post"
-
-        state["blog_content"] = f"Title: {title}\n\nContent: {content}"
-        print(f"✅ Successfully scraped {len(content)} characters")
-
-    except Exception as e:
-        error_msg = f"Failed to scrape blog content: {str(e)}"
-        print(f"❌ {error_msg}")
-        state["error"] = error_msg
-
-    return state
-
-
-def generate_blog_summary(state: AutomationState) -> AutomationState:
-    """Step 2: Generate key insights and summary"""
-    if state.get("error"):
-        return state
-
-    try:
-        print("📝 Generating blog summary and key insights...")
-
-        summary_prompt = f"""
-        Analyze this blog post and extract key insights for social media content creation.
-        
-        Blog Content:
-        {state["blog_content"][:4000]}  # Truncate for token limits
-        
-        Please provide:
-        1. A concise summary (100-150 words)
-        2. 3-5 key takeaways/insights
-        3. Main topic/theme
-        4. Target audience
-        5. Key statistics or claims that need validation
-        
-        Format your response clearly with sections.
-        """
-
-        response = llm.invoke(summary_prompt)
-        state["blog_summary"] = response.content
-        print("✅ Blog summary generated")
-
-    except Exception as e:
-        error_msg = f"Failed to generate summary: {str(e)}"
-        print(f"❌ {error_msg}")
-        state["error"] = error_msg
-
-    return state
-
-
-def generate_linkedin_posts(state: AutomationState) -> AutomationState:
-    """Step 3a: Generate LinkedIn post drafts"""
-    if state.get("error"):
-        return state
-
-    try:
-        print("💼 Generating LinkedIn posts...")
-
-        monday_prompt = f"""
-        Create a LinkedIn teaser post based on this blog summary. 
-        
-        Blog Summary: {state["blog_summary"]}
-        
-        Requirements:
-        - 150-200 words exactly
-        - Engaging hook to grab attention
-        - Tease the main insight without giving everything away
-        - Professional LinkedIn tone
-        - Include relevant hashtags
-        - NO LINKS (this is a teaser)
-        - End with a question or call for engagement
-        
-        Make it compelling enough that people want to know more.
-        """
-
-        monday_response = llm.invoke(monday_prompt)
-        monday_post = SocialMediaPost(
-            content=monday_response.content.strip(),
-            platform="LinkedIn",
-            post_type="Monday Teaser",
-            scheduled_day="Monday",
-            char_count=len(monday_response.content),
-            validation_notes=[],
+    if input_method == "Upload file":
+        uploaded_file = st.file_uploader(
+            "Choose an Obsidian markdown file",
+            type=["md"],
+            help="Upload your .md file from Obsidian",
         )
 
-        thursday_prompt = f"""
-        Create a LinkedIn post that references the full blog post.
-        
-        Blog Summary: {state["blog_summary"]}
-        Blog URL: {state["blog_url"]}
-        
-        Requirements:
-        - 200-300 words exactly
-        - Reference insights from the blog
-        - Include the blog URL
-        - Professional but engaging tone
-        - Add relevant hashtags
-        - Include a clear call-to-action to read the full post
-        - Share 1-2 specific takeaways from the blog
-        
-        This should provide value while encouraging clicks to the full article.
-        """
+        if uploaded_file is not None:
+            obsidian_content = str(uploaded_file.read(), "utf-8")
+            st.success(f"✅ File uploaded: {uploaded_file.name}")
 
-        thursday_response = llm.invoke(thursday_prompt)
-        thursday_post = SocialMediaPost(
-            content=thursday_response.content.strip(),
-            platform="LinkedIn",
-            post_type="Thursday Blog Reference",
-            scheduled_day="Thursday",
-            char_count=len(thursday_response.content),
-            validation_notes=[],
+            with st.expander("Preview content"):
+                st.text_area(
+                    "Content preview:",
+                    obsidian_content[:500] + "..."
+                    if len(obsidian_content) > 500
+                    else obsidian_content,
+                    height=200,
+                    disabled=True,
+                )
+
+    elif input_method == "Enter file path":
+        file_path = st.text_input(
+            "Enter the full path to your Obsidian note:",
+            placeholder="/path/to/your/obsidian/vault/note.md",
+            help="Enter the absolute path to your Obsidian markdown file",
         )
 
-        state["linkedin_posts"] = [monday_post, thursday_post]
-        print("✅ LinkedIn posts generated")
+        if file_path and st.button("Load file"):
+            try:
+                obsidian_content = read_obsidian_notes(file_path)
+                st.success(f"✅ File loaded: {file_path}")
 
-    except Exception as e:
-        error_msg = f"Failed to generate LinkedIn posts: {str(e)}"
-        print(f"❌ {error_msg}")
-        state["error"] = error_msg
-
-    return state
-
-
-def generate_x_posts(state: AutomationState) -> AutomationState:
-    """Step 3b: Generate X (Twitter) post drafts"""
-    if state.get("error"):
-        return state
-
-    try:
-        print("🐦 Generating X posts...")
-
-        x_prompt = f"""
-        Create 3 different X (Twitter) posts based on this blog summary.
-        
-        Blog Summary: {state["blog_summary"]}
-        
-        Requirements for EACH post:
-        - Maximum 280 characters (including spaces and hashtags)
-        - Different angles/takeaways from the blog
-        - Engaging and shareable
-        - Include relevant hashtags
-        - Can include the blog URL if it fits
-        - Twitter-appropriate tone (more casual than LinkedIn)
-        
-        Create 3 distinct posts, each focusing on a different aspect:
-        1. Key statistic or surprising fact
-        2. Actionable tip or insight  
-        3. Question or discussion starter
-        
-        Format: Return exactly 3 posts, numbered 1-3, each on a new line.
-        """
-
-        x_response = llm.invoke(x_prompt)
-        x_content = x_response.content.strip()
-
-        x_posts = []
-        post_lines = [line.strip() for line in x_content.split("\n") if line.strip()]
-
-        for i, line in enumerate(post_lines[:3], 1):
-            clean_line = re.sub(r"^\d+[\.\)]\s*", "", line)
-
-            x_post = SocialMediaPost(
-                content=clean_line,
-                platform="X",
-                post_type=f"Daily Post {i}",
-                scheduled_day=f"Day {i}",
-                char_count=len(clean_line),
-                validation_notes=[],
-            )
-            x_posts.append(x_post)
-
-        state["x_posts"] = x_posts
-        print(f"✅ Generated {len(x_posts)} X posts")
-
-    except Exception as e:
-        error_msg = f"Failed to generate X posts: {str(e)}"
-        print(f"❌ {error_msg}")
-        state["error"] = error_msg
-
-    return state
-
-
-def validate_posts(state: AutomationState) -> AutomationState:
-    """Step 4: Validate posts for length, claims, and quality"""
-    if state.get("error"):
-        return state
-
-    try:
-        print("🔍 Validating posts...")
-
-        validation_issues = []
-
-        for post in state.get("linkedin_posts", []):
-            if post.post_type == "Monday Teaser":
-                if not (150 <= post.char_count <= 200):
-                    issue = f"LinkedIn Monday post length issue: {post.char_count} chars (should be 150-200)"
-                    post.validation_notes.append(issue)
-                    validation_issues.append(issue)
-
-                if state["blog_url"].lower() in post.content.lower():
-                    issue = (
-                        "LinkedIn Monday teaser contains link (should not have links)"
+                with st.expander("Preview content"):
+                    st.text_area(
+                        "Content preview:",
+                        obsidian_content[:500] + "..."
+                        if len(obsidian_content) > 500
+                        else obsidian_content,
+                        height=200,
+                        disabled=True,
                     )
-                    post.validation_notes.append(issue)
-                    validation_issues.append(issue)
 
-            elif post.post_type == "Thursday Blog Reference":
-                if not (200 <= post.char_count <= 300):
-                    issue = f"LinkedIn Thursday post length issue: {post.char_count} chars (should be 200-300)"
-                    post.validation_notes.append(issue)
-                    validation_issues.append(issue)
+            except Exception as e:
+                st.error(f"❌ Error loading file: {str(e)}")
 
-                if state["blog_url"].lower() not in post.content.lower():
-                    issue = "LinkedIn Thursday post missing blog URL"
-                    post.validation_notes.append(issue)
-                    validation_issues.append(issue)
-
-        for post in state.get("x_posts", []):
-            if post.char_count > 280:
-                issue = f"X post too long: {post.char_count} chars (max 280)"
-                post.validation_notes.append(issue)
-                validation_issues.append(issue)
-
-        validation_prompt = f"""
-        Review these social media posts for potentially unsupported claims or statements that need fact-checking.
-        
-        LinkedIn Posts:
-        {[post.content for post in state.get("linkedin_posts", [])]}
-        
-        X Posts:
-        {[post.content for post in state.get("x_posts", [])]}
-        
-        Flag any:
-        - Specific statistics without clear sources
-        - Bold claims that seem unverifiable  
-        - Statements presented as facts that could be opinions
-        - Exaggerated language
-        
-        Return a list of concerning claims that should be marked with ⚠️ for manual review.
-        """
-
-        validation_response = llm.invoke(validation_prompt)
-        if (
-            "⚠️" in validation_response.content
-            or "concerning" in validation_response.content.lower()
-        ):
-            validation_issues.append(
-                f"⚠️ Potential unsupported claims detected: {validation_response.content}"
-            )
-
-        state["validation_issues"] = validation_issues
-        print(f"✅ Validation complete. Found {len(validation_issues)} issues.")
-
-    except Exception as e:
-        error_msg = f"Validation failed: {str(e)}"
-        print(f"❌ {error_msg}")
-        state["error"] = error_msg
-
-    return state
-
-
-def compose_email(state: AutomationState) -> AutomationState:
-    """Step 6: Compose the final email with all content"""
-    if state.get("error"):
-        return state
-
-    try:
-        print("📧 Composing email...")
-
-        today = datetime.now()
-        next_monday = today + timedelta(days=(7 - today.weekday()))
-        next_thursday = next_monday + timedelta(days=3)
-
-        # Helper function to format validation notes
-        def format_validation_notes(notes):
-            if not notes:
-                return ""
-            return f'<p style="color: #e67e22;"><strong>⚠️ Issues:</strong> {", ".join(notes)}</p>'
-
-        # Create base HTML template
-        email_content = "".join(
-            [
-                "<html>",
-                "<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>",
-                "<h1 style='color: #2c3e50;'>📅 Weekly Social Media Content</h1>",
-                f"<p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>",
-                f"<p><strong>Blog Source:</strong> <a href='{state['blog_url']}'>{state['blog_url']}</a></p>",
-                "<hr style='border: 1px solid #eee; margin: 20px 0;'>",
-                "<h2 style='color: #3498db;'>💼 LinkedIn Posts</h2>",
-                "<div style='background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px;'>",
-                f"<h3 style='color: #e74c3c;'>📅 Monday Teaser ({next_monday.strftime('%B %d')})</h3>",
-                f"<p><strong>Length:</strong> {state['linkedin_posts'][0].char_count} characters</p>",
-                "<div style='background: white; padding: 10px; border-left: 4px solid #3498db;'>",
-                f"{state['linkedin_posts'][0].content.replace(chr(10), '<br>')}",
-                "</div>",
-                format_validation_notes(state["linkedin_posts"][0].validation_notes),
-                "</div>",
-                "<div style='background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px;'>",
-                f"<h3 style='color: #27ae60;'>📅 Thursday Blog Reference ({next_thursday.strftime('%B %d')})</h3>",
-                f"<p><strong>Length:</strong> {state['linkedin_posts'][1].char_count} characters</p>",
-                "<div style='background: white; padding: 10px; border-left: 4px solid #27ae60;'>",
-                f"{state['linkedin_posts'][1].content.replace(chr(10), '<br>')}",
-                "</div>",
-                format_validation_notes(state["linkedin_posts"][1].validation_notes),
-                "</div>",
-                "<h2 style='color: #1da1f2;'>🐦 X Posts (Daily)</h2>",
-            ]
-        )
-
-        for i, post in enumerate(state.get("x_posts", []), 1):
-            email_content += f"""
-            <div style="background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px;">
-                <h3 style="color: #1da1f2;">📅 Post {i}</h3>
-                <p><strong>Length:</strong> {post.char_count}/280 characters</p>
-                <div style="background: white; padding: 10px; border-left: 4px solid #1da1f2;">
-                    {post.content}
-                </div>
-                {f'<p style="color: #e67e22;"><strong>⚠️ Issues:</strong> {", ".join(post.validation_notes)}</p>' if post.validation_notes else ""}
-            </div>
-            """
-
-        if state.get("validation_issues"):
-            email_content += f"""
-            <h2 style="color: #e74c3c;">⚠️ Validation Notes</h2>
-            <div style="background: #fff3cd; padding: 15px; border: 1px solid #ffeaa7; border-radius: 5px;">
-                <ul>
-                {"".join([f"<li>{issue}</li>" for issue in state["validation_issues"]])}
-                </ul>
-                <p><em>Please review flagged items before posting.</em></p>
-            </div>
-            """
-
-        email_content += """
-        <hr style="border: 1px solid #eee; margin: 20px 0;">
-        <p style="color: #7f8c8d; font-size: 0.9em;">
-            <em>Generated by Social Media Automation Script</em><br>
-            Remember to review all content before posting and verify any claims marked with ⚠️
-        </p>
-        
-        </body>
-        </html>
-        """
-
-        state["email_content"] = email_content
-        print("✅ Email composed successfully")
-
-    except Exception as e:
-        error_msg = f"Failed to compose email: {str(e)}"
-        print(f"❌ {error_msg}")
-        state["error"] = error_msg
-
-    return state
-
-
-def send_email(state: AutomationState) -> AutomationState:
-    """Step 7: Send the email"""
-    if state.get("error"):
-        return state
-
-    try:
-        print("📤 Sending email...")
-
-        if not all(
-            [EMAIL_CONFIG["email"], EMAIL_CONFIG["password"], EMAIL_CONFIG["recipient"]]
-        ):
-            raise ValueError(
-                "Email configuration incomplete. Please set EMAIL_ADDRESS, EMAIL_PASSWORD, and RECIPIENT_EMAIL environment variables."
-            )
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = (
-            f"Weekly Social Media Content - {datetime.now().strftime('%Y-%m-%d')}"
-        )
-        msg["From"] = EMAIL_CONFIG["email"]
-        msg["To"] = EMAIL_CONFIG["recipient"]
-
-        html_part = MIMEText(state["email_content"], "html")
-        msg.attach(html_part)
-
-        with smtplib.SMTP(
-            EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]
-        ) as server:
-            server.starttls()
-            server.login(EMAIL_CONFIG["email"], EMAIL_CONFIG["password"])
-            server.send_message(msg)
-
-        print("✅ Email sent successfully!")
-
-    except Exception as e:
-        error_msg = f"Failed to send email: {str(e)}"
-        print(f"❌ {error_msg}")
-        state["error"] = error_msg
-
-    return state
-
-
-def create_workflow():
-    """Create the LangGraph workflow"""
-
-    workflow = StateGraph(AutomationState)
-
-    workflow.add_node("scraper", scrape_blog_content)
-    workflow.add_node("summarizer", generate_blog_summary)
-    workflow.add_node("linkedin_generator", generate_linkedin_posts)
-    workflow.add_node("x_generator", generate_x_posts)
-    workflow.add_node("validator", validate_posts)
-    workflow.add_node("email_composer", compose_email)
-    workflow.add_node("email_sender", send_email)
-
-    workflow.set_entry_point("scraper")
-    workflow.add_edge("scraper", "summarizer")
-    workflow.add_edge("summarizer", "linkedin_generator")
-    workflow.add_edge("linkedin_generator", "x_generator")
-    workflow.add_edge("x_generator", "validator")
-    workflow.add_edge("validator", "email_composer")
-    workflow.add_edge("email_composer", "email_sender")
-    workflow.add_edge("email_sender", END)
-
-    return workflow.compile()
-
-
-def run_automation(blog_url: str):
-    """Main function to run the social media automation"""
-    print("🚀 Starting Social Media Content Automation")
-    print("=" * 50)
-
-    initial_state: AutomationState = {
-        "blog_url": blog_url,
-        "blog_content": "",
-        "blog_summary": "",
-        "linkedin_posts": [],
-        "x_posts": [],
-        "email_content": "",
-        "validation_issues": [],
-        "error": None,
-    }
-
-    app = create_workflow()
-    final_state = app.invoke(initial_state)
-
-    if final_state.get("error"):
-        print(f"\n❌ Automation failed: {final_state['error']}")
-        return False
     else:
-        print("\n🎉 Automation completed successfully!")
-        print(
-            f"📊 Generated {len(final_state['linkedin_posts'])} LinkedIn posts and {len(final_state['x_posts'])} X posts"
+        obsidian_content = st.text_area(
+            "Paste your Obsidian note content:",
+            height=300,
+            placeholder="Paste your markdown content here...",
+            help="Copy and paste the content from your Obsidian note",
         )
-        if final_state["validation_issues"]:
-            print(
-                f"⚠️  Found {len(final_state['validation_issues'])} validation issues for review"
+
+        if obsidian_content:
+            st.success(f"✅ Content pasted ({len(obsidian_content)} characters)")
+
+with tab3:
+    st.header("Custom Prompt Instructions")
+    st.markdown("""
+    **Customize the AI's behavior** by adding your own instructions. These will be applied to both LinkedIn and X post generation.
+    """)
+
+    with st.expander("💡 Prompt Examples", expanded=False):
+        st.markdown("""
+        **Tone & Style:**
+        - "Write in a conversational, friendly tone"
+        - "Use technical language suitable for software engineers"
+        - "Adopt a motivational, inspiring writing style"
+        
+        **Content Focus:**
+        - "Focus on practical applications and real-world examples"
+        - "Emphasize the business value and ROI"
+        - "Include specific metrics and data points when possible"
+        
+        **Format & Structure:**
+        - "Use bullet points for key takeaways"
+        - "Include a compelling story or anecdote"
+        - "End with actionable next steps"
+        
+        **Industry-Specific:**
+        - "Target startup founders and entrepreneurs"
+        - "Focus on enterprise-level considerations"
+        - "Emphasize security and compliance aspects"
+        """)
+
+    custom_prompt = st.text_area(
+        "Enter your custom instructions:",
+        height=200,
+        placeholder="Example: Write in a conversational tone, focus on practical applications, and include specific examples that resonate with software engineers...",
+        help="These instructions will be added to the AI prompts for generating social media content",
+    )
+
+    if custom_prompt:
+        st.success(f"✅ Custom prompt added ({len(custom_prompt)} characters)")
+
+        with st.expander("Preview custom instructions"):
+            st.text_area(
+                "Your custom prompt:", custom_prompt, height=100, disabled=True
             )
-        return True
 
+st.markdown("---")
 
-if __name__ == "__main__":
-    BLOG_URL = input("Enter the blog URL to process: ").strip()
+col1, col2, col3 = st.columns([1, 2, 1])
 
-    if not BLOG_URL:
-        print("❌ Please provide a valid blog URL")
-        exit(1)
+with col2:
+    if st.button(
+        "🚀 Generate Social Media Content", type="primary", use_container_width=True
+    ):
+        if not blog_url and not obsidian_content:
+            st.error("❌ Please provide either a blog URL or Obsidian notes content")
+        else:
+            with st.spinner("🔄 Processing content and generating posts..."):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
 
-    required_vars = [
-        "GEMINI_API_KEY",
-        "EMAIL_ADDRESS",
-        "EMAIL_PASSWORD",
-        "RECIPIENT_EMAIL",
-    ]
-    missing_vars = [var for var in required_vars if not os.getenv(var)]
+                try:
+                    status_text.text("🌐 Scraping blog content...")
+                    progress_bar.progress(20)
 
-    if missing_vars:
-        print(f"❌ Missing required environment variables: {', '.join(missing_vars)}")
-        print("\nPlease set the following environment variables:")
-        for var in missing_vars:
-            print(f"export {var}='your_value_here'")
-        exit(1)
+                    status_text.text("📝 Processing notes and generating summary...")
+                    progress_bar.progress(40)
 
-    success = run_automation(BLOG_URL)
+                    status_text.text("💼 Creating LinkedIn posts...")
+                    progress_bar.progress(60)
 
-    if success:
-        print("\n📧 Check your email for the generated content!")
-    else:
-        print("\n❌ Automation failed. Please check the logs above.")
+                    status_text.text("🐦 Generating X posts...")
+                    progress_bar.progress(70)
+
+                    status_text.text("🔍 Validating content...")
+                    progress_bar.progress(80)
+
+                    status_text.text("🔍 Running peer review...")
+                    progress_bar.progress(90)
+
+                    status_text.text("✨ Improving content...")
+                    progress_bar.progress(95)
+
+                    final_state = run_automation(
+                        blog_url or "", obsidian_content, custom_prompt
+                    )
+
+                    progress_bar.progress(100)
+                    status_text.empty()
+
+                    if final_state and not final_state.get("error"):
+                        st.balloons()
+                        display_results_in_streamlit(final_state)
+                    else:
+                        error_msg = (
+                            final_state.get("error", "Unknown error occurred")
+                            if final_state
+                            else "Automation failed"
+                        )
+                        st.error(f"❌ Content generation failed: {error_msg}")
+
+                except Exception as e:
+                    st.error(f"❌ An error occurred: {str(e)}")
+                    progress_bar.empty()
+                    status_text.empty()
+
+st.markdown("---")
+st.markdown("**💡 Tips:**")
+st.markdown("""
+- **Blog URL**: Works with most blog platforms and news sites
+- **Obsidian Notes**: Can be used alone or combined with blog content
+- **File Upload**: Drag and drop your .md files directly
+- **File Path**: Use absolute paths like `/Users/yourname/Documents/Obsidian/note.md`
+- **Direct Paste**: Copy content directly from Obsidian and paste here
+- **Custom Prompt**: Add specific instructions to customize tone, style, and focus
+- **Prompt Examples**: Use the expandable section for inspiration and best practices
+""")
+
+with st.sidebar:
+    st.header("📋 Configuration")
+    st.info("Environment variables are loaded from .env file")
+
+    st.markdown("**Required Variables:**")
+    for var in required_vars:
+        status = "✅" if os.getenv(var) else "❌"
+        st.markdown(f"{status} `{var}`")
+
+    st.markdown("---")
+    st.markdown("**🔧 Features:**")
+    st.markdown("""
+    - Blog content scraping
+    - Obsidian notes integration
+    - Custom prompt injection
+    - LinkedIn post generation
+    - X (Twitter) thread creation
+    - Content validation
+    - 🆕 AI peer review analysis
+    - 🆕 Automated content improvement
+    - Interactive results display
+    """)
